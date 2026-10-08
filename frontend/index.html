@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgriVolt Dashboard</title>
+    <style>
+      :root { font-family: Arial, sans-serif; color: #153625; background: #eef7ef; }
+      body { margin: 0; padding: 28px; }
+      main { max-width: 1000px; margin: auto; }
+      header { background: #ffffffcc; border-radius: 14px; display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; padding: 20px; }
+      h1 { margin: 0; color: #1b6b3a; }
+      p { color: #557060; }
+      button { background: #1b6b3a; border: 0; border-radius: 8px; color: white; cursor: pointer; font-weight: bold; padding: 12px 16px; }
+      button:hover { filter: brightness(.92); }
+      button.off { background: #a63c30; }
+      button.secondary { background: #357a4b; }
+      .controls { align-items: center; background: white; border-radius: 12px; box-shadow: 0 3px 12px #173d2414; display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; padding: 16px; }
+      .controls strong { margin-right: auto; }
+      #command-result { color: #1b6b3a; font-weight: bold; width: 100%; }
+      .alert { background: #fff7d6; border-left: 5px solid #e3a916; border-radius: 8px; font-weight: bold; margin-bottom: 20px; padding: 16px; }
+      .alert.success { background: #ddf7e5; border-left-color: #1b8d48; }
+      .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+      .card { background: white; border-radius: 12px; box-shadow: 0 3px 12px #173d2414; padding: 18px; }
+      .label { color: #668271; font-size: .9rem; margin-bottom: 8px; }
+      .value { color: #153625; font-size: 1.65rem; font-weight: bold; }
+      #error { color: #9b1c1c; font-weight: bold; }
+      #last-updated { color: #668271; font-size: .85rem; }
+      @media (max-width: 640px) { body { padding: 14px; } header { align-items: flex-start; flex-direction: column; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>🌱 AgriVolt</h1>
+          <p>Smart Farm Energy &amp; Irrigation Management</p>
+          <div id="last-updated">Dashboard loading…</div>
+        </div>
+        <button onclick="loadDashboard()">Refresh readings</button>
+      </header>
+      <div id="alert" class="alert">Loading farm data…</div>
+      <div id="error"></div>
+      <section class="controls">
+        <strong>Demo pump control</strong>
+        <button onclick="controlPump('ON')">Turn pump ON</button>
+        <button class="off" onclick="controlPump('OFF')">Turn pump OFF</button>
+        <div id="command-result">Checking latest pump command…</div>
+      </section>
+      <section class="controls">
+        <strong>Demo scenarios</strong>
+        <button class="secondary" onclick="sendScenario('low')">Low soil moisture</button>
+        <button class="secondary" onclick="sendScenario('highEnergy')">High energy use</button>
+        <button class="secondary" onclick="sendScenario('complete')">Irrigation complete</button>
+        <div id="scenario-result"></div>
+      </section>
+      <section id="cards" class="grid"></section>
+    </main>
+    <script>
+      const metrics = [
+        ["Pump Status", "pump_status", ""], ["Estimated Power", "estimated_power_kw", " kW"],
+        ["Voltage", "voltage_v", " V"], ["Current", "current_a", " A"],
+        ["Water Tank", "water_tank_percent", "%"], ["Soil Moisture", "soil_moisture_percent", "%"],
+        ["Today's Energy", "todays_energy_kwh", " kWh"], ["Estimated Cost", "estimated_cost_inr", ""],
+        ["Pump Health", "pump_health", ""]
+      ];
+      async function loadDashboard() {
+        const alert = document.getElementById("alert");
+        const cards = document.getElementById("cards");
+        const error = document.getElementById("error");
+        error.textContent = "";
+        alert.textContent = "Loading farm data…";
+        try {
+          const response = await fetch("/dashboard");
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "Could not load dashboard");
+          const isSuccess = data.alert.includes("completed successfully");
+          alert.className = "alert" + (isSuccess ? " success" : "");
+          alert.textContent = (isSuccess ? "✅ " : "⚠️ ") + data.alert;
+          cards.innerHTML = metrics.map(([label, key, unit]) => {
+            const value = key === "estimated_cost_inr" ? "₹" + data[key] : data[key] + unit;
+            return `<article class="card"><div class="label">${label}</div><div class="value">${value}</div></article>`;
+          }).join("");
+          document.getElementById("last-updated").textContent = "Last updated: " + new Date().toLocaleTimeString();
+        } catch (problem) {
+          alert.textContent = "No dashboard data yet";
+          cards.innerHTML = "";
+          error.textContent = "Send a reading through Swagger first, then click Refresh readings.";
+        }
+      }
+      async function controlPump(action) {
+        const result = document.getElementById("command-result");
+        result.textContent = "Sending pump command…";
+        try {
+          const response = await fetch("/pump/control", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error("Could not record pump command");
+          result.textContent = "✓ " + data.message;
+        } catch (problem) {
+          result.textContent = "Could not send the pump command.";
+        }
+      }
+      async function loadPumpStatus() {
+        const result = document.getElementById("command-result");
+        try {
+          const response = await fetch("/pump/status");
+          const data = await response.json();
+          result.textContent = data.message;
+        } catch (problem) {
+          result.textContent = "Could not load pump status.";
+        }
+      }
+      async function sendScenario(name) {
+        const scenarios = {
+          low: {
+            pump_status: "ON", estimated_power_kw: 2.4, voltage_v: 228,
+            current_a: 10.5, water_tank_percent: 72, soil_moisture_percent: 35,
+            todays_energy_kwh: 12.8, pump_health: "Normal"
+          },
+          highEnergy: {
+            pump_status: "ON", estimated_power_kw: 3.7, voltage_v: 228,
+            current_a: 16.2, water_tank_percent: 65, soil_moisture_percent: 60,
+            todays_energy_kwh: 18.4, pump_health: "Normal"
+          },
+          complete: {
+            pump_status: "OFF", estimated_power_kw: 0, voltage_v: 228,
+            current_a: 0, water_tank_percent: 58, soil_moisture_percent: 68,
+            todays_energy_kwh: 14.1, pump_health: "Normal"
+          }
+        };
+        const result = document.getElementById("scenario-result");
+        result.textContent = "Updating demo data…";
+        try {
+          const response = await fetch("/readings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(scenarios[name])
+          });
+          if (!response.ok) throw new Error("Could not save demo reading");
+          result.textContent = "✓ Dashboard updated.";
+          await loadDashboard();
+        } catch (problem) {
+          result.textContent = "Could not update demo data.";
+        }
+      }
+      loadDashboard();
+      loadPumpStatus();
+    </script>
+  </body>
+</html>
